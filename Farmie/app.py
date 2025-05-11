@@ -175,8 +175,7 @@ def get_farms_by_user():
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/get_crops_by_farm', methods=['GET'])
-@jwt_required()
+@app.route('/get_crops_for_farm', methods=['GET'])
 def get_crops_by_farm():
     farm_id = request.args.get('farm_id')
     if not farm_id:
@@ -189,22 +188,52 @@ def get_crops_by_farm():
             SELECT Crop.crop_name, Crop.crop_family, Cultivate.quantity
             FROM Crop
             JOIN Cultivate ON Crop.crop_name = Cultivate.crop_name
-            WHERE cultivate.farm_id = %s
+            WHERE Cultivate.farm_id = %s
         """, (farm_id,))
         crops = cur.fetchall()
         cur.close()
         conn.close()
         return jsonify([{
-            'name': row[0],
+            'crop_name': row[0],
             'family': row[1],
             'quantity': row[2],
         } for row in crops]), 200
     except Exception as e:
         return jsonify({'error': str(e)}), 500
 
-@app.route('/predict_crop', methods=['POST'])
+
+# @app.route('/predict_crop', methods=['POST'])
+# @jwt_required()
+# def predict_crop():
+#     if 'image' not in request.files:
+#         return jsonify({'error': 'No image provided'}), 400
+
+#     image_file = request.files['image']
+#     if image_file.filename == '':
+#         return jsonify({'error': 'No selected file'}), 400
+
+#     try:
+#         response = requests.post(
+#             'http://localhost:5001/predict',  # model server endpoint
+#             files={'image': (image_file.filename, image_file.stream, image_file.mimetype)}
+#         )
+
+#         if response.status_code != 200:
+#             return jsonify({'error': 'Prediction failed from model server', 'details': response.json()}), 500
+
+#         prediction = response.json()
+#         return jsonify(prediction), 200
+
+#     except requests.exceptions.ConnectionError:
+#         return jsonify({'error': 'Model server is unavailable'}), 503
+#     except Exception as e:
+#         return jsonify({'error': f'Unexpected error: {str(e)}'}), 500
+    
+
+@app.route('/predict_crop', methods=['POST','GET'])
 @jwt_required()
 def predict_crop():
+    current_user = get_jwt_identity()
     if 'image' not in request.files:
         return jsonify({'error': 'No image provided'}), 400
 
@@ -214,7 +243,7 @@ def predict_crop():
 
     try:
         response = requests.post(
-            'http://localhost:5001/predict',  # model server endpoint
+            'http://192.168.0.2:5001/predict',  # model server endpoint
             files={'image': (image_file.filename, image_file.stream, image_file.mimetype)}
         )
 
@@ -228,6 +257,81 @@ def predict_crop():
         return jsonify({'error': 'Model server is unavailable'}), 503
     except Exception as e:
         return jsonify({'error': f'Unexpected error: {str(e)}'}), 500
+
+
+@app.route('/get_all_crops', methods=['GET'])
+def get_all_crops():
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        query = "SELECT crop_name, crop_family FROM Crop"
+        cursor.execute(query)
+        crops = cursor.fetchall()
+
+        return jsonify(crops), 200
+    except Exception as e:
+        print("Error fetching crops:", e)
+        return jsonify({'error': 'Internal server error'}), 500
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+@app.route('/add_crop_to_farm', methods=['POST'])
+@jwt_required()
+def add_crop_to_farm():
+    # Extract user identity and request data
+    user_name = get_jwt_identity()
+    data = request.get_json()
+
+    crop_name = data.get('crop_name')
+    quantity = data.get('quantity')
+    farm_id = data.get('farm_id')
+
+    # Validate the input data
+    if not crop_name or not quantity or not farm_id:
+        return jsonify({'error': 'Missing required fields'}), 400
+
+    try:
+        # Establish database connection
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Check if the user owns the farm
+        cursor.execute("SELECT user_id FROM farm WHERE farm_id = %s", (farm_id,))
+        farm = cursor.fetchone()
+        if not farm:
+            return jsonify({'error': 'Farm not found'}), 404
+
+        cursor.execute("SELECT user_id FROM User WHERE user_name = %s", (user_name,))
+        user = cursor.fetchone()
+        if not user or user[0] != farm[0]:
+            return jsonify({'error': 'You do not have permission to add crops to this farm'}), 403
+
+        # Check if the crop exists in the Crop table
+        cursor.execute("SELECT * FROM Crop WHERE crop_name = %s", (crop_name,))
+        crop = cursor.fetchone()
+        if not crop:
+            return jsonify({'error': 'Crop not found in the database'}), 404
+
+        # Add the crop to the Cultivate table (linking crop and farm)
+        cursor.execute("""
+            INSERT INTO Cultivate (farm_id, crop_name, quantity)
+            VALUES (%s, %s, %s)
+        """, (farm_id, crop_name, quantity))
+        
+        # Commit the transaction
+        conn.commit()
+        
+        # Clean up and close connections
+        cursor.close()
+        conn.close()
+        
+        return jsonify({'message': 'Crop added to farm successfully'}), 201
+
+    except Exception as e:
+        return jsonify({'error': f'Internal server error: {str(e)}'}), 500
+
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000, debug=True)
