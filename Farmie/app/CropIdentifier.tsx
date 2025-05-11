@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { View, Text, TextInput, StyleSheet, TouchableOpacity, Image, ActivityIndicator } from 'react-native';
+import { View, Text, TextInput, StyleSheet, TouchableOpacity, Image, ActivityIndicator, Alert } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import axios from 'axios';
@@ -9,7 +9,8 @@ import config from '../config/config';
 const CropIdentifier = () => {
   const [image, setImage] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
-  const [predictionResult, setPredictionResult] = useState<string>(''); // State for prediction result
+  const [predictionResult, setPredictionResult] = useState<string>('');
+  const [recommendations, setRecommendations] = useState<string[]>([]);
   const router = useRouter();
   const { farmId, farmName } = useLocalSearchParams();
 
@@ -48,6 +49,7 @@ const CropIdentifier = () => {
 
     setLoading(true);
     setPredictionResult('');
+    setRecommendations([]);
 
     try {
       const token = await AsyncStorage.getItem('jwt_token');
@@ -73,6 +75,39 @@ const CropIdentifier = () => {
     }
   };
 
+  const handleRecommendation = async () => {
+    const token = await AsyncStorage.getItem('jwt_token');
+    if (!token) {
+      Alert.alert('Authentication error', 'Please log in again.');
+      return;
+    }
+
+    const cropName = predictionResult.split('\n')[0]?.replace('Crop: ', '');
+    console.log('Sending crop name:', JSON.stringify(cropName));
+    console.log('Sending farm id:', JSON.stringify(farmId));
+    if (!cropName || !farmId) {
+      Alert.alert('Error', 'Make sure the crop is analyzed and farm is selected.');
+      return;
+    }
+
+    try {
+      const response = await axios.get(`${config.API_BASE_URL}/crop_recommendation`, {
+  params: {
+    crop_name: cropName,
+    farm_id: farmId,
+  },
+  headers: {
+    Authorization: `Bearer ${token}`,
+  },
+});
+
+      setRecommendations(response.data.recommendations);
+    } catch (error) {
+      Alert.alert('Error', 'Failed to fetch recommendations.');
+      console.error(error);
+    }
+  };
+
   return (
     <View style={styles.container}>
       <TouchableOpacity onPress={pickImage}>
@@ -93,10 +128,8 @@ const CropIdentifier = () => {
         <Text style={styles.submitText}>Analyze Crop</Text>
       </TouchableOpacity>
 
-      {/* Loading Spinner */}
       {loading && <ActivityIndicator size="large" color="#228B22" style={{ marginTop: 15 }} />}
 
-      {/* Display the prediction result */}
       {predictionResult ? (
         <View style={styles.resultContainer}>
           {predictionResult.split('\n').map((line, idx) => (
@@ -104,6 +137,21 @@ const CropIdentifier = () => {
           ))}
         </View>
       ) : null}
+
+      {predictionResult && (
+        <TouchableOpacity style={styles.recommendButton} onPress={handleRecommendation}>
+          <Text style={styles.recommendText}>Get Recommendation</Text>
+        </TouchableOpacity>
+      )}
+
+      {recommendations.length > 0 && (
+        <View style={styles.resultContainer}>
+          <Text style={styles.resultText}>Recommended Crops:</Text>
+          {recommendations.map((crop, idx) => (
+            <Text key={idx} style={styles.resultText}>• {crop}</Text>
+          ))}
+        </View>
+      )}
     </View>
   );
 };
@@ -132,6 +180,17 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   submitText: { color: '#fff', fontWeight: 'bold' },
+  recommendButton: {
+    backgroundColor: '#556B2F',
+    padding: 15,
+    borderRadius: 8,
+    alignItems: 'center',
+    marginTop: 10,
+  },
+  recommendText: {
+    color: '#fff',
+    fontWeight: 'bold',
+  },
   resultContainer: {
     marginTop: 20,
     padding: 10,

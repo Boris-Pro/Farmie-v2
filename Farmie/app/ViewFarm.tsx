@@ -167,7 +167,15 @@ const ViewFarm = () => {
       {/* Crop Recommendation Button */}
       <TouchableOpacity
         style={styles.recommendationButton}
-        onPress={() => router.push({ pathname: '/CropIdentifier' } as any)}
+        onPress={() =>
+  router.push({
+    pathname: '/CropIdentifier',
+    params: {
+      farmId: String(id),
+      farmName: String(name),
+    },
+  } as any)
+}
       >
         <Text style={styles.buttonText}>Crop Recommendation</Text>
       </TouchableOpacity>

@@ -8,6 +8,8 @@ import requests
 from werkzeug.utils import secure_filename
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
+from datetime import datetime, timedelta
+import traceback
 
 # --- App and JWT Setup ---
 app = Flask(__name__)
@@ -331,6 +333,220 @@ def add_crop_to_farm():
 
     except Exception as e:
         return jsonify({'error': f'Internal server error: {str(e)}'}), 500
+    
+@app.route('/crop_family', methods=['GET'])
+def get_crop_family():
+    crop_name = request.args.get('crop_name')
+    if not crop_name:
+        return jsonify({'error': 'Missing crop_name'}), 400
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT crop_family FROM Crop WHERE crop_name = %s", (crop_name,))
+        result = cursor.fetchone()
+        cursor.close()
+        conn.close()
+
+        if not result:
+            return jsonify({'error': 'Crop not found'}), 404
+
+        return jsonify({'crop_family': result[0]}), 200
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+    
+
+@app.route('/get_weather', methods=['GET'])
+@jwt_required()
+def get_weather():
+    farm_id = request.args.get('farm_id')
+    if not farm_id:
+        return jsonify({'error': 'Missing farm_id'}), 400
+
+    try:
+        # Connect to DB to get latitude and longitude of the farm
+        conn = get_db_connection()
+        cursor = conn.cursor()
+        cursor.execute("SELECT latitude, longitude FROM farm WHERE farm_id = %s", (farm_id,))
+        farm = cursor.fetchone()
+        cursor.close()
+        conn.close()
+
+        if not farm:
+            return jsonify({'error': 'Farm not found'}), 404
+
+        latitude, longitude = farm
+
+        # Calculate date range (last 30 days)
+        end_date = datetime.now().date()
+        start_date = end_date - timedelta(days=30)
+
+        # Construct API URL
+        weather_url = (
+            f"https://archive-api.open-meteo.com/v1/archive"
+            f"?latitude={latitude}&longitude={longitude}"
+            f"&start_date={start_date}&end_date={end_date}"
+            f"&daily=temperature_2m_mean,precipitation_sum,relative_humidity_2m_mean"
+            f"&timezone=auto"
+        )
+
+        # Request weather data
+        response = requests.get(weather_url)
+        if response.status_code != 200:
+            return jsonify({'error': 'Failed to fetch weather data'}), 500
+
+        data = response.json()
+        if "daily" not in data:
+            return jsonify({'error': 'Unexpected weather API response'}), 500
+
+        daily = data["daily"]
+        count = len(daily["temperature_2m_mean"])
+
+        # Compute averages
+        avg_temp = sum(daily["temperature_2m_mean"]) / count
+        avg_rainfall = sum(daily["precipitation_sum"]) / count
+        avg_humidity = sum(daily["relative_humidity_2m_mean"]) / count
+
+        return jsonify({
+            "average_temperature": round(avg_temp, 2),
+            "average_rainfall": round(avg_rainfall, 2),
+            "average_humidity": round(avg_humidity, 2),
+        }), 200
+
+    except Exception as e:
+        return jsonify({'error': f'Internal server error: {str(e)}'}), 500
+    
+
+
+@app.route('/crop_recommendation', methods=['GET'])
+@jwt_required()
+def recommend_crop():
+    analyzed_crop_name = request.args.get('crop_name')
+    farm_id = request.args.get('farm_id')
+    print(f"Analyzed crop: {analyzed_crop_name}, Farm ID: {farm_id}")
+
+    if not analyzed_crop_name or not farm_id:
+        return jsonify({'error': 'Missing crop_name or farm_id'}), 400
+
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor(dictionary=True)
+
+        # 1. Get crop_family of analyzed crop
+        cursor.execute("SELECT crop_family FROM Crop WHERE crop_name = %s", (analyzed_crop_name,))
+        result = cursor.fetchone()
+        if not result:
+            return jsonify({'error': 'Analyzed crop not found'}), 404
+        analyzed_family = result['crop_family']
+        print(f"Analyzed crop family: {analyzed_family}")
+
+        # 2. Get latitude and longitude for the given farm
+        cursor.execute("SELECT latitude, longitude FROM Farm WHERE farm_id = %s", (farm_id,))
+        farm = cursor.fetchone()
+        if not farm:
+            return jsonify({'error': 'Farm not found'}), 404
+        latitude, longitude = farm['latitude'], farm['longitude']
+        print(f"Farm coordinates: Latitude {latitude}, Longitude {longitude}")
+
+        # 3. Get full-year 2024 weather data
+        start_date = '2024-01-01'
+        end_date = '2024-12-31'
+        weather_url = (
+            f"https://archive-api.open-meteo.com/v1/archive"
+            f"?latitude={latitude}&longitude={longitude}"
+            f"&start_date={start_date}&end_date={end_date}"
+            f"&daily=temperature_2m_mean,precipitation_sum,relative_humidity_2m_mean"
+            f"&timezone=auto"
+        )
+
+        response = requests.get(weather_url)
+        if response.status_code != 200:
+            print(f"Weather API failed with status: {response.status_code}")
+            return jsonify({'error': 'Failed to fetch weather data'}), 500
+
+        data = response.json().get('daily', {})
+        print("Weather data keys received:", data.keys())
+
+        def safe_average(lst):
+            filtered = [v for v in lst if v is not None]
+            return round(sum(filtered) / len(filtered), 2) if filtered else 0.0
+
+        def safe_total(lst):
+            filtered = [v for v in lst if v is not None]
+            return round(sum(filtered), 2)
+
+        avg_temp = safe_average(data.get('temperature_2m_mean', []))
+        avg_humidity = safe_average(data.get('relative_humidity_2m_mean', []))
+        total_rain = safe_total(data.get('precipitation_sum', []))
+
+        print(f"Avg Temp: {avg_temp}, Avg Humidity: {avg_humidity}, Total Rain: {total_rain}")
+
+        # 4. Get all crops
+        cursor.execute("SELECT crop_name, crop_family, optimal_temp, optimal_rainfall, optimal_humidity FROM Crop")
+        crops = cursor.fetchall()
+
+        # 5. Get total quantity of each crop across all farms
+        cursor.execute("""
+            SELECT 
+                c.crop_name,
+                COALESCE(SUM(cv.quantity), 0) AS total_quantity
+            FROM Crop c
+            LEFT JOIN Cultivate cv ON c.crop_name = cv.crop_name
+            GROUP BY c.crop_name
+        """)
+        quantities = cursor.fetchall()
+        quantity_dict = {row['crop_name']: row['total_quantity'] for row in quantities}
+
+        # 6. Identify most cultivated crop
+        most_cultivated_crop = max(quantity_dict.items(), key=lambda x: x[1])[0] if quantity_dict else None
+        print(f"Most cultivated crop: {most_cultivated_crop}")
+
+        # 7. Scoring logic
+        results = []
+        for crop in crops:
+            name = crop['crop_name']
+            family = crop['crop_family']
+            optimal_temp = float(crop['optimal_temp']) if crop['optimal_temp'] is not None else None
+            optimal_rain = float(crop['optimal_rainfall']) if crop['optimal_rainfall'] is not None else None
+            optimal_humidity = float(crop['optimal_humidity']) if crop['optimal_humidity'] is not None else None
+
+            family_score = 20 if family == analyzed_family else 0
+            temp_score = max(0, 30 - abs(optimal_temp - avg_temp)) if optimal_temp is not None else 0
+            rain_score = max(0, 30 - abs(optimal_rain - total_rain)) if optimal_rain is not None else 0
+            humidity_score = max(0, 20 - abs(optimal_humidity - avg_humidity)) if optimal_humidity is not None else 0
+
+            total_score = family_score + temp_score + rain_score + humidity_score
+
+            if name == most_cultivated_crop:
+                total_score = 0
+
+            results.append({
+                'crop_name': name,
+                'score': round(total_score, 2),
+                'total_quantity': quantity_dict.get(name, 0)
+            })
+
+        
+        # 8. Remove the analyzed crop from the results
+        filtered_results = [crop for crop in results if crop['crop_name'] != analyzed_crop_name]
+
+        # 9. Return top 3 recommendations excluding the analyzed crop
+        top_crops = sorted(filtered_results, key=lambda x: x['score'], reverse=True)[:3]
+
+        #top_crops = sorted(results, key=lambda x: x['score'], reverse=True)[:3]
+
+        return jsonify({'recommendations': [c['crop_name'] for c in top_crops]}), 200
+
+    except Exception as e:
+        traceback.print_exc()
+        return jsonify({'error': f'Internal server error: {str(e)}'}), 500
+
+    finally:
+        if cursor: cursor.close()
+        if conn: conn.close()
+
+
 
 
 if __name__ == '__main__':

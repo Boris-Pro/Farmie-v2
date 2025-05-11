@@ -26,7 +26,10 @@ CREATE TABLE farm (
 -- Create Crop table
 CREATE TABLE Crop (
     crop_name VARCHAR(100) PRIMARY KEY,
-    crop_family VARCHAR(100) NOT NULL
+    crop_family VARCHAR(100) NOT NULL,
+    optimal_temp NUMERIC,      -- Average temperature in °C
+    optimal_humidity NUMERIC,  -- Average humidity in %
+    optimal_rainfall NUMERIC   -- Average annual rainfall in mm
 );
 
 -- Create Cultivate table (linking crops and farms)
