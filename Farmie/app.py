@@ -1,0 +1,233 @@
+from flask import Flask, request, jsonify, make_response
+import mysql.connector
+import hashlib
+import os
+import requests
+# import numpy as np
+# import tensorflow as tf
+from werkzeug.utils import secure_filename
+from flask_cors import CORS
+from flask_jwt_extended import JWTManager, create_access_token, jwt_required, get_jwt_identity
+
+# --- App and JWT Setup ---
+app = Flask(__name__)
+app.config['SECRET_KEY'] = 'farmie_secret_key'
+app.config['JWT_SECRET_KEY'] = 'your_jwt_secret_key'
+app.config['SESSION_COOKIE_NAME'] = 'session'
+CORS(app, origins="*", supports_credentials=True)
+jwt = JWTManager(app)
+
+# --- Model and Upload Setup ---
+# UPLOAD_FOLDER = 'uploads'
+# os.makedirs(UPLOAD_FOLDER, exist_ok=True)
+
+# model = None  # Global model reference
+# class_names = [
+#     'aloevera', 'banana', 'bilimbi', 'cantaloupe', 'cassava', 'coconut', 'corn',
+#     'cucumber', 'curcuma', 'eggplant', 'galangal', 'ginger', 'guava', 'kale',
+#     'longbeans', 'mango', 'melon', 'orange', 'paddy', 'papaya', 'peper chili',
+#     'pineapple', 'pomelo', 'shallot', 'soybeans', 'spinach', 'sweet potatoes',
+#     'tobacco', 'waterapple', 'watermelon'
+# ]
+# img_height, img_width = 224, 224
+
+# # --- Lazy Load Model ---
+# def get_model():
+#     global model
+#     if model is None:
+#         try:
+#             model = tf.keras.models.load_model("plant_identifier_model1")
+#         except Exception as e:
+#             raise RuntimeError(f"Failed to load model: {e}")
+#     return model
+
+# # --- Image Prediction Logic ---
+# def predict_image(image_path):
+#     model = get_model()
+#     img = tf.keras.utils.load_img(image_path, target_size=(img_height, img_width))
+#     img_array = tf.keras.utils.img_to_array(img)
+#     img_array = tf.expand_dims(img_array, 0)
+#     predictions = model.predict(img_array)
+#     predicted_index = np.argmax(predictions[0])
+#     predicted_class = class_names[predicted_index]
+#     confidence = float(predictions[0][predicted_index])
+#     return predicted_class, confidence
+
+
+
+ 
+
+# --- DB Connection & Password Hashing ---
+def get_db_connection():
+    return mysql.connector.connect(
+        host='localhost',
+        user='boris',
+        password='password',
+        database='farmie'
+    )
+
+def hash_password(password):
+    return hashlib.sha256(password.encode()).hexdigest()
+
+
+# --- Routes ---
+@app.route('/register', methods=['POST'])
+def register():
+    data = request.get_json()
+    user_name, email, password = data.get('user_name'), data.get('email'), data.get('password')
+    if not user_name or not password or not email:
+        return make_response(jsonify({'message': 'All fields are required'}), 400)
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT * FROM User WHERE user_name = %s', (user_name,))
+    if cursor.fetchone():
+        return make_response(jsonify({'message': 'User already exists'}), 409)
+
+    hashed_password = hash_password(password)
+    cursor.execute('INSERT INTO User (user_name, email, password) VALUES (%s, %s, %s)', 
+                   (user_name, email, hashed_password))
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return jsonify({'message': 'User registered successfully'}), 201
+
+@app.route('/login', methods=['POST'])
+def login():
+    data = request.get_json()
+    user_name, password = data.get('user_name'), data.get('password')
+    if not user_name or not password:
+        return make_response(jsonify({'message': 'Username and password required'}), 400)
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute('SELECT password FROM User WHERE user_name = %s', (user_name,))
+    result = cursor.fetchone()
+    if not result or hash_password(password) != result[0]:
+        return make_response(jsonify({'message': 'Invalid username or password'}), 401)
+
+    access_token = create_access_token(identity=user_name)
+    cursor.close()
+    conn.close()
+    return jsonify({'access_token': access_token}), 200
+
+@app.route('/logout', methods=['POST'])
+def logout():
+    return jsonify({'message': 'Logout successful'}), 200
+
+@app.route('/add_farm', methods=['POST'])
+@jwt_required()
+def add_farm():
+    user_name = get_jwt_identity()
+    data = request.get_json()
+    farm_name, longitude, latitude = data.get('name'), data.get('longitude'), data.get('latitude')
+    if not farm_name or longitude is None or latitude is None:
+        return jsonify({'error': 'Missing required fields'}), 400
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT user_id FROM user WHERE user_name = %s", (user_name,))
+        user = cur.fetchone()
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+
+        user_id = user[0]
+        cur.execute("""
+            INSERT INTO farm (user_id, farm_name, longitude, latitude)
+            VALUES (%s, %s, %s, %s)
+        """, (user_id, farm_name, longitude, latitude))
+        conn.commit()
+        cur.close()
+        conn.close()
+        return jsonify({'message': 'Farm added successfully'}), 201
+
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/get_farms_by_user', methods=['GET'])
+@jwt_required()
+def get_farms_by_user():
+    user_name = get_jwt_identity()
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("SELECT user_id FROM User WHERE user_name = %s", (user_name,))
+        user = cur.fetchone()
+        if not user:
+            return jsonify([]), 200
+
+        user_id = user[0]
+        cur.execute("""
+            SELECT farm_id, farm_name, longitude, latitude
+            FROM farm
+            WHERE user_id = %s
+        """, (user_id,))
+        farms = cur.fetchall()
+        cur.close()
+        conn.close()
+        return jsonify([{
+            'id': row[0],
+            'name': row[1],
+            'longitude': row[2],
+            'latitude': row[3],
+        } for row in farms]), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/get_crops_by_farm', methods=['GET'])
+@jwt_required()
+def get_crops_by_farm():
+    farm_id = request.args.get('farm_id')
+    if not farm_id:
+        return jsonify({'error': 'Missing farm_id'}), 400
+
+    try:
+        conn = get_db_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT Crop.crop_name, Crop.crop_family, Cultivate.quantity
+            FROM Crop
+            JOIN Cultivate ON Crop.crop_name = Cultivate.crop_name
+            WHERE cultivate.farm_id = %s
+        """, (farm_id,))
+        crops = cur.fetchall()
+        cur.close()
+        conn.close()
+        return jsonify([{
+            'name': row[0],
+            'family': row[1],
+            'quantity': row[2],
+        } for row in crops]), 200
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/predict_crop', methods=['POST'])
+@jwt_required()
+def predict_crop():
+    if 'image' not in request.files:
+        return jsonify({'error': 'No image provided'}), 400
+
+    image_file = request.files['image']
+    if image_file.filename == '':
+        return jsonify({'error': 'No selected file'}), 400
+
+    try:
+        response = requests.post(
+            'http://localhost:5001/predict',  # model server endpoint
+            files={'image': (image_file.filename, image_file.stream, image_file.mimetype)}
+        )
+
+        if response.status_code != 200:
+            return jsonify({'error': 'Prediction failed from model server', 'details': response.json()}), 500
+
+        prediction = response.json()
+        return jsonify(prediction), 200
+
+    except requests.exceptions.ConnectionError:
+        return jsonify({'error': 'Model server is unavailable'}), 503
+    except Exception as e:
+        return jsonify({'error': f'Unexpected error: {str(e)}'}), 500
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=5000, debug=True)
