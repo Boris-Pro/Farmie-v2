@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import {
   View,
   Text,
@@ -10,7 +10,9 @@ import {
 } from 'react-native';
 import axios from 'axios';
 import { useLocalSearchParams, useRouter } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 import config from '../config/config';
+import { useFocusEffect } from '@react-navigation/native';
 
 type Crop = {
   crop_name: string;
@@ -89,8 +91,46 @@ const ViewFarm = () => {
     }
   };
 
+  const handleDeleteFarm = async () => {
+    const token = await AsyncStorage.getItem('jwt_token');
+    if (!token) {
+      Alert.alert('Error', 'You must be logged in to delete a farm.');
+      return;
+    }
+
+    Alert.alert(
+      'Confirm Deletion',
+      'Are you sure you want to delete this farm?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              const res = await axios.delete(`${config.API_BASE_URL}/delete_farm/${id}`, {
+                headers: { Authorization: `Bearer ${token}` },
+              });
+              Alert.alert('Success', 'Farm deleted successfully.');
+              router.replace('/Dashboard');
+            } catch (error) {
+              console.error('Failed to delete farm:', error);
+              Alert.alert('Error', 'Could not delete the farm.');
+            }
+          },
+        },
+      ]
+    );
+  };
+
+  // Refresh crop list when the screen gains focus
+  useFocusEffect(
+    useCallback(() => {
+      fetchCrops();
+    }, [id])
+  );
+
   useEffect(() => {
-    fetchCrops();
     if (latitude && longitude) {
       setWeatherLoading(true);
       getYearlyWeatherStats(parseFloat(latitude), parseFloat(longitude))
@@ -105,7 +145,7 @@ const ViewFarm = () => {
         .catch(() => setWeatherError('Could not fetch weather data.'))
         .finally(() => setWeatherLoading(false));
     }
-  }, [id, latitude, longitude]);
+  }, [latitude, longitude]);
 
   return (
     <View style={styles.container}>
@@ -114,21 +154,19 @@ const ViewFarm = () => {
         Location: Latitude {latitude}, Longitude {longitude}
       </Text>
 
-      {/* Weather Info */}
       {weatherLoading ? (
         <ActivityIndicator size="small" color="#4682B4" style={{ marginBottom: 10 }} />
       ) : weatherError ? (
         <Text style={[styles.loadingText, { color: 'red' }]}>{weatherError}</Text>
       ) : weatherStats && (
         <View style={styles.weatherCard}>
-          <Text style={styles.weatherTitle}>Yearly Weather Averages</Text>
+          <Text style={styles.weatherTitle}>Monthly Weather Averages</Text>
           <Text style={styles.weatherText}>Avg Temp: {weatherStats.avgTemperature}°C</Text>
           <Text style={styles.weatherText}>Avg Humidity: {weatherStats.avgHumidity}%</Text>
           <Text style={styles.weatherText}>Total Rainfall: {weatherStats.totalRainfall} mm</Text>
         </View>
       )}
 
-      {/* Crop Info */}
       {loading ? (
         <ActivityIndicator size="large" color="#888" />
       ) : (
@@ -141,17 +179,29 @@ const ViewFarm = () => {
               data={crops}
               keyExtractor={(item, index) => `${item.crop_name}-${index}`}
               renderItem={({ item }) => (
-                <View style={styles.cropCard}>
+                <TouchableOpacity
+                  style={styles.cropCard}
+                  onPress={() =>
+                    router.push({
+                      pathname: '/CropDetails',
+                      params: {
+                        cropName: item.crop_name,
+                        cropFamily: item.crop_family,
+                        quantity: item.quantity.toString(),
+                        farmId: id,
+                      },
+                    } as any)
+                  }
+                >
                   <Text style={styles.cropName}>Crop: {item.crop_name}</Text>
                   <Text style={styles.cropQuantity}>Quantity: {item.quantity}</Text>
-                </View>
+                </TouchableOpacity>
               )}
             />
           )}
         </>
       )}
 
-      {/* Add Crop Button */}
       <TouchableOpacity
         style={styles.addCropButton}
         onPress={() =>
@@ -164,29 +214,32 @@ const ViewFarm = () => {
         <Text style={styles.buttonText}>Add Crop</Text>
       </TouchableOpacity>
 
-      {/* Crop Recommendation Button */}
       <TouchableOpacity
         style={styles.recommendationButton}
         onPress={() =>
-  router.push({
-    pathname: '/CropIdentifier',
-    params: {
-      farmId: String(id),
-      farmName: String(name),
-    },
-  } as any)
-}
+          router.push({
+            pathname: '/CropIdentifier',
+            params: {
+              farmId: String(id),
+              farmName: String(name),
+            },
+          } as any)
+        }
       >
         <Text style={styles.buttonText}>Crop Recommendation</Text>
+      </TouchableOpacity>
+
+      <TouchableOpacity style={styles.deleteButton} onPress={handleDeleteFarm}>
+        <Text style={styles.buttonText}>Delete Farm</Text>
       </TouchableOpacity>
     </View>
   );
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F0F0F0', padding: 16 },
+  container: { flex: 1, backgroundColor: '#8B4513', padding: 16 },
   title: { fontSize: 24, fontWeight: 'bold', marginBottom: 8, textAlign: 'center' },
-  location: { fontSize: 16, color: '#444', marginBottom: 16, textAlign: 'center' },
+  location: { fontSize: 16, color: '#fff', marginBottom: 16, textAlign: 'center' },
   loadingText: { textAlign: 'center', fontSize: 16, color: '#888' },
   subtitle: { fontSize: 18, fontWeight: 'bold', marginBottom: 8, textAlign: 'center' },
   noCropsText: { textAlign: 'center', fontSize: 16, color: '#888' },
@@ -221,6 +274,14 @@ const styles = StyleSheet.create({
   },
   recommendationButton: {
     backgroundColor: '#228B22',
+    paddingVertical: 12,
+    paddingHorizontal: 30,
+    borderRadius: 10,
+    marginTop: 10,
+    alignItems: 'center',
+  },
+  deleteButton: {
+    backgroundColor: '#B22222',
     paddingVertical: 12,
     paddingHorizontal: 30,
     borderRadius: 10,

@@ -110,7 +110,7 @@ const AddCrop = () => {
         </Picker>
       </View>
 
-      <Text style={styles.label}>Quantity:</Text>
+      <Text style={styles.label}>Quantity (lbs per month yield):</Text>
       <TextInput
         style={styles.input}
         keyboardType="numeric"

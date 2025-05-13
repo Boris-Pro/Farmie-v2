@@ -111,7 +111,7 @@ const Dashboard = () => {
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#F0F0F0', padding: 16 },
+  container: { flex: 1, backgroundColor: '#8B4513', padding: 16 },
   card: {
     backgroundColor: '#fff',
     borderRadius: 12,
@@ -140,8 +140,8 @@ const styles = StyleSheet.create({
     padding: 10,
     borderRadius: 8,
     position: 'absolute',
-    top: 40,
-    right: 20,
+    top: 670,
+    right: 280,
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',

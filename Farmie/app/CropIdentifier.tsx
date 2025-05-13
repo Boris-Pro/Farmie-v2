@@ -66,7 +66,17 @@ const CropIdentifier = () => {
       });
 
       const { predicted_crop, confidence } = response.data;
-      setPredictionResult(`Crop: ${predicted_crop}\nConfidence: ${confidence}`);
+
+   
+      const familyResponse = await axios.get(`${config.API_BASE_URL}/crop_family`, {
+        params: { crop_name: predicted_crop },
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      const { crop_family } = familyResponse.data;
+
+
+      setPredictionResult(`Pioneer Plant: ${predicted_crop}\nPioneer Plant Family: ${crop_family}\nConfidence: ${confidence}`);
     } catch (error) {
       setPredictionResult('Error: Something went wrong. Please try again.');
       console.error(error);
@@ -82,7 +92,7 @@ const CropIdentifier = () => {
       return;
     }
 
-    const cropName = predictionResult.split('\n')[0]?.replace('Crop: ', '');
+    const cropName = predictionResult.split('\n')[0]?.replace('Pioneer Plant: ', '');
     console.log('Sending crop name:', JSON.stringify(cropName));
     console.log('Sending farm id:', JSON.stringify(farmId));
     if (!cropName || !farmId) {
@@ -146,7 +156,7 @@ const CropIdentifier = () => {
 
       {recommendations.length > 0 && (
         <View style={styles.resultContainer}>
-          <Text style={styles.resultText}>Recommended Crops:</Text>
+          <Text style={styles.resultText}>Recommended crops that will thrive in similar environment:</Text>
           {recommendations.map((crop, idx) => (
             <Text key={idx} style={styles.resultText}>• {crop}</Text>
           ))}
@@ -196,7 +206,7 @@ const styles = StyleSheet.create({
     padding: 10,
     backgroundColor: '#f0f0f0',
     borderRadius: 8,
-    alignItems: 'center',
+    alignItems: 'left',
   },
   resultText: {
     fontSize: 16,

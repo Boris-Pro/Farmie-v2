@@ -63,9 +63,9 @@ jwt = JWTManager(app)
 def get_db_connection():
     return mysql.connector.connect(
         host='localhost',
-        user='boris',
-        password='password',
-        database='farmie'
+        user='farmie_user',
+        password='farmie123',
+        database='Farmie'
     )
 
 def hash_password(password):
@@ -216,7 +216,7 @@ def get_crops_by_farm():
 
 #     try:
 #         response = requests.post(
-#             'http://localhost:5001/predict',  # model server endpoint
+#             'http://localhost:5002/predict',  # model server endpoint
 #             files={'image': (image_file.filename, image_file.stream, image_file.mimetype)}
 #         )
 
@@ -245,7 +245,7 @@ def predict_crop():
 
     try:
         response = requests.post(
-            'http://192.168.0.2:5001/predict',  # model server endpoint
+            'http://172.20.10.2:5002/predict',  # model server endpoint
             files={'image': (image_file.filename, image_file.stream, image_file.mimetype)}
         )
 
@@ -546,8 +546,103 @@ def recommend_crop():
         if cursor: cursor.close()
         if conn: conn.close()
 
+@app.route('/update_crop_quantity', methods=['PUT'])
+def update_crop_quantity():
+    data = request.get_json()
+    farm_id = data.get('farm_id')
+    crop_name = data.get('crop_name')
+    new_quantity = data.get('new_quantity')
+
+    if not all([farm_id, crop_name, isinstance(new_quantity, int)]):
+        return jsonify({'error': 'Invalid input'}), 400
+
+    try:
+        connection = get_db_connection()
+        cursor = connection.cursor()
+
+        update_query = """
+            UPDATE cultivate
+            SET quantity = %s
+            WHERE farm_id = %s AND crop_name = %s
+        """
+        cursor.execute(update_query, (new_quantity, farm_id, crop_name))
+        connection.commit()
+
+        if cursor.rowcount == 0:
+            return jsonify({'error': 'No matching crop found'}), 404
+
+        return jsonify({'message': 'Quantity updated successfully'}), 200
+    except Exception as e:
+        print('Error:', e)
+        return jsonify({'error': 'Server error'}), 500
+    finally:
+        cursor.close()
+        connection.close()
+
+@app.route('/delete_crop_from_farm', methods=['DELETE'])
+def delete_crop_from_farm():
+    farm_id = request.args.get('farm_id')
+    crop_name = request.args.get('crop_name')
+
+    if not farm_id or not crop_name:
+        return jsonify({'error': 'Missing farm_id or crop_name'}), 400
+
+    try:
+        connection = get_db_connection()
+        cursor = connection.cursor()
+
+        delete_query = """
+            DELETE FROM cultivate
+            WHERE farm_id = %s AND crop_name = %s
+        """
+        cursor.execute(delete_query, (farm_id, crop_name))
+        connection.commit()
+
+        if cursor.rowcount == 0:
+            return jsonify({'error': 'Crop not found for this farm'}), 404
+
+        return jsonify({'message': 'Crop deleted successfully'}), 200
+    except Exception as e:
+        print('Error:', e)
+        return jsonify({'error': 'Server error'}), 500
+    finally:
+        cursor.close()
+        connection.close()
+
+@app.route('/delete_farm/<int:farm_id>', methods=['DELETE'])
+@jwt_required()
+def delete_farm(farm_id):
+    user_name = get_jwt_identity()
+    try:
+        conn = get_db_connection()
+        cursor = conn.cursor()
+
+        # Verify user owns the farm
+        cursor.execute("SELECT user_id FROM farm WHERE farm_id = %s", (farm_id,))
+        farm = cursor.fetchone()
+        if not farm:
+            return jsonify({'error': 'Farm not found'}), 404
+
+        cursor.execute("SELECT user_id FROM User WHERE user_name = %s", (user_name,))
+        user = cursor.fetchone()
+        if not user or user[0] != farm[0]:
+            return jsonify({'error': 'Unauthorized to delete this farm'}), 403
+
+        # Delete related entries from Cultivate first due to FK constraints
+        cursor.execute("DELETE FROM Cultivate WHERE farm_id = %s", (farm_id,))
+        # Delete the farm
+        cursor.execute("DELETE FROM farm WHERE farm_id = %s", (farm_id,))
+
+        conn.commit()
+        return jsonify({'message': 'Farm deleted successfully'}), 200
+
+    except Exception as e:
+        return jsonify({'error': f'Internal server error: {str(e)}'}), 500
+    finally:
+        cursor.close()
+        conn.close()
 
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=5001, debug=True)

@@ -53,7 +53,7 @@ const CropIdentifier = () => {
 
       const result = await response.json();
       if (response.ok) {
-        Alert.alert('Prediction', `Crop: ${result.predicted_crop}\nConfidence: ${(result.confidence * 100).toFixed(2)}%`);
+        Alert.alert('Prediction', `Crop: ${result.predicted_crop}\n Plant Family\nConfidence: ${(result.confidence * 100).toFixed(2)}%`);
       } else {
         throw new Error(result.error || 'Prediction failed');
       }

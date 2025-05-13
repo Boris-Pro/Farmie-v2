@@ -92,7 +92,7 @@ const AddFarm = () => {
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, padding: 20 },
+  container: { flex: 1, padding: 20, backgroundColor: '#fff' },
   label: { fontSize: 16, marginVertical: 8 },
   input: {
     borderWidth: 1,

@@ -64,6 +64,9 @@ const LoginScreen = () => {
         <Text style={styles.buttonText}>Login</Text>
       </TouchableOpacity>
       {errorMessage ? <Text style={styles.error}>{errorMessage}</Text> : null}
+        <TouchableOpacity style={styles.button} onPress={() => router.push('/Register')}>
+          <Text style={styles.buttonText}>Go to Register</Text>
+        </TouchableOpacity>
     </View>
   );
 };
