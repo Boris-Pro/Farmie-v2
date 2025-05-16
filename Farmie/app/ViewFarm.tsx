@@ -160,7 +160,7 @@ const ViewFarm = () => {
         <Text style={[styles.loadingText, { color: 'red' }]}>{weatherError}</Text>
       ) : weatherStats && (
         <View style={styles.weatherCard}>
-          <Text style={styles.weatherTitle}>Monthly Weather Averages</Text>
+          <Text style={styles.weatherTitle}>Monthly- Weather Averages</Text>
           <Text style={styles.weatherText}>Avg Temp: {weatherStats.avgTemperature}°C</Text>
           <Text style={styles.weatherText}>Avg Humidity: {weatherStats.avgHumidity}%</Text>
           <Text style={styles.weatherText}>Total Rainfall: {weatherStats.totalRainfall} mm</Text>
